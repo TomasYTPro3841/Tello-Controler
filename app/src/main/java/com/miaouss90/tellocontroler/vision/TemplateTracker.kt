@@ -29,7 +29,7 @@ class TemplateTracker(
     private val lostThreshold: Float = 0.45f,
     private val adaptThreshold: Float = 0.85f,
     private val adaptRate: Float = 0.1f,
-) {
+) : TargetTracker {
     companion object {
         /** Template side as a fraction of the frame height. */
         const val TEMPLATE_FRACTION = 0.2f
@@ -48,10 +48,10 @@ class TemplateTracker(
     private var y = 0
     private var lostFrames = 0
 
-    val hasTarget: Boolean get() = size > 0
+    override val hasTarget: Boolean get() = size > 0
 
     /** Selects the patch centered on (nx, ny) normalized; false if the area is too uniform to track. */
-    fun select(frame: GrayFrame, nx: Float, ny: Float): Boolean {
+    override fun select(frame: GrayFrame, nx: Float, ny: Float): Boolean {
         val side = max(8, (frame.height * TEMPLATE_FRACTION).roundToInt())
         val left = ((nx * frame.width).roundToInt() - side / 2).coerceIn(0, frame.width - side)
         val top = ((ny * frame.height).roundToInt() - side / 2).coerceIn(0, frame.height - side)
@@ -70,12 +70,12 @@ class TemplateTracker(
         return true
     }
 
-    fun clear() {
+    override fun clear() {
         size = 0
         template = FloatArray(0)
     }
 
-    fun track(frame: GrayFrame): TrackResult {
+    override fun track(frame: GrayFrame): TrackResult {
         check(hasTarget) { "no target selected" }
         // Widen the search while lost, to re-acquire after a quick motion.
         val radius = searchRadius * (1 + min(lostFrames, 3))

@@ -97,4 +97,14 @@ class TemplateTrackerTest {
         tracker.select(scaledScene(120, 90, 36), 0.5f, 0.5f)
         assertEquals(1f, tracker.track(scaledScene(120, 90, 36)).scale, 0.01f)
     }
+
+    @Test
+    fun `downscale halves the frame averaging luminance`() {
+        val argb = IntArray(4 * 4) { 0xFF000000.toInt() or (if (it % 4 < 2) 0xFFFFFF else 0) }
+        val small = GrayFrame.fromArgb(4, 4, argb).downscale2()
+        assertEquals(2, small.width)
+        assertEquals(255, small.pixels[0])
+        assertEquals(0, small.pixels[1])
+        assertEquals(0xFFFFFFFF.toInt(), small.argb!![0])
+    }
 }

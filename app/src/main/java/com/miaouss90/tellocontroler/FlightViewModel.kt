@@ -39,11 +39,20 @@ import com.miaouss90.tellocontroler.tello.TelloTelemetry
 import com.miaouss90.tellocontroler.tello.TelloVideoReceiver
 import com.miaouss90.tellocontroler.tello.TelloWifiManager
 import com.miaouss90.tellocontroler.tello.TelloWifiState
+import com.miaouss90.tellocontroler.vision.ColorTracker
+import com.miaouss90.tellocontroler.vision.FaceTracker
 import com.miaouss90.tellocontroler.vision.FollowController
 import com.miaouss90.tellocontroler.vision.GrayFrame
 import com.miaouss90.tellocontroler.vision.InputArbiter
+import com.miaouss90.tellocontroler.vision.OrbitController
+import com.miaouss90.tellocontroler.vision.QrAction
+import com.miaouss90.tellocontroler.vision.QrCommand
+import com.miaouss90.tellocontroler.vision.QrDebouncer
+import com.miaouss90.tellocontroler.vision.QrReader
+import com.miaouss90.tellocontroler.vision.TargetTracker
 import com.miaouss90.tellocontroler.vision.TemplateTracker
 import com.miaouss90.tellocontroler.vision.TrackResult
+import com.miaouss90.tellocontroler.vision.TrackerKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -78,6 +87,7 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
         private const val TARGET_FRESH_MS = 500L
         /** Follow disengages after the target has been lost or stale this long. */
         private const val FOLLOW_GIVE_UP_MS = 2000L
+        private const val QR_PERIOD_MS = 400L
     }
 
     private val client = TelloClient()
@@ -142,7 +152,9 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
     val recordingSince = _recordingSince.asStateFlow()
 
     // Target tracking (vision only for now: it does not steer the aircraft).
-    private val tracker = TemplateTracker()
+    private var tracker: TargetTracker = TemplateTracker()
+    private val qrDebouncer = QrDebouncer()
+    private var lastQrAt = 0L
     private val pendingSelection = AtomicReference<Pair<Float, Float>?>(null)
     @Volatile private var clearTracker = false
 
@@ -158,6 +170,10 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
     /** FOLLOW: the aircraft turns/climbs to keep the target centered while the pilot does not touch the sticks. */
     private val _followEngaged = MutableStateFlow(false)
     val followEngaged = _followEngaged.asStateFlow()
+
+    /** ORBIT is FOLLOW plus a constant sideways roll around the target (so [followEngaged] is true too). */
+    private val _orbitEngaged = MutableStateFlow(false)
+    val orbitEngaged = _orbitEngaged.asStateFlow()
 
     /** HOVER: neutral RC is held (the Tello stabilizes itself) and FOLLOW is off; any pilot stick input ends it. */
     private val _hoverEngaged = MutableStateFlow(false)
@@ -439,13 +455,22 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
         _target.value = null
     }
 
-    /** Vision thread: one downscaled video frame. */
-    fun onVisionFrame(frame: GrayFrame) {
+    private fun newTracker(kind: TrackerKind): TargetTracker = when (kind) {
+        TrackerKind.TEMPLATE -> TemplateTracker()
+        TrackerKind.COLOR -> ColorTracker()
+        TrackerKind.FACE -> FaceTracker()
+    }
+
+    /** Vision thread: one video frame (twice the tracker size while QR actions are on). */
+    fun onVisionFrame(raw: GrayFrame) {
+        if (settings.value.qrActions) readQr(raw)
+        val frame = if (raw.width > GrayFrame.VISION_WIDTH) raw.downscale2() else raw
         if (clearTracker) {
             tracker.clear()
             clearTracker = false
         }
         pendingSelection.getAndSet(null)?.let { (x, y) ->
+            tracker = newTracker(settings.value.tracker)
             if (!tracker.select(frame, x, y)) {
                 showNotice("Nothing to track there — pick a textured object")
                 if (!tracker.hasTarget) _visionActive.value = false
@@ -459,6 +484,22 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
             _target.value = result
             targetAt = now
             if (!result.lost) targetSeenAt = now
+        }
+    }
+
+    /** Only land / hover / photo / record can be triggered: a QR code in the scene must never move the aircraft. */
+    private fun readQr(frame: GrayFrame) {
+        val now = System.currentTimeMillis()
+        if (now - lastQrAt < QR_PERIOD_MS) return
+        lastQrAt = now
+        val action = QrCommand.parse(QrReader.decode(frame)) ?: return
+        if (!qrDebouncer.accept(action)) return
+        showNotice("QR: ${action.name}")
+        when (action) {
+            QrAction.LAND -> land()
+            QrAction.HOVER -> if (!_hoverEngaged.value) toggleHover()
+            QrAction.PHOTO -> requestPhoto()
+            QrAction.RECORD -> toggleRecording()
         }
     }
 
@@ -482,9 +523,12 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) { recordFlightSample("hover:off") }
     }
 
+    /** HUD ORBIT: like FOLLOW, but circling the target at the distance it had when selected. */
+    fun toggleOrbit() = toggleFollow(orbit = true)
+
     /** RB / HUD FOLLOW. Only engages while flying with a locked target. */
-    fun toggleFollow() {
-        if (_followEngaged.value) return disengageFollow("Follow off")
+    fun toggleFollow(orbit: Boolean = false) {
+        if (_followEngaged.value) return disengageFollow(if (_orbitEngaged.value) "Orbit off" else "Follow off")
         val target = _target.value
         when {
             target == null || target.lost -> showNotice("Select a target first (tap the video)")
@@ -492,9 +536,10 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
             else -> {
                 disengageHover(null)
                 targetSeenAt = System.currentTimeMillis()
+                _orbitEngaged.value = orbit
                 _followEngaged.value = true
-                showNotice("FOLLOW on — any stick input takes over")
-                viewModelScope.launch(Dispatchers.IO) { recordFlightSample("follow:on") }
+                showNotice("${if (orbit) "ORBIT" else "FOLLOW"} on — any stick input takes over")
+                viewModelScope.launch(Dispatchers.IO) { recordFlightSample(if (orbit) "orbit:on" else "follow:on") }
             }
         }
     }
@@ -502,6 +547,7 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
     private fun disengageFollow(reason: String?) {
         if (!_followEngaged.value) return
         _followEngaged.value = false
+        _orbitEngaged.value = false
         reason?.let { showNotice(it) }
         viewModelScope.launch(Dispatchers.IO) { recordFlightSample("follow:off") }
     }
@@ -511,7 +557,9 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
         if (!_followEngaged.value) return null
         val target = _target.value ?: return null
         if (System.currentTimeMillis() - targetAt > TARGET_FRESH_MS) return null
-        return FollowController.command(target)
+        if (!_orbitEngaged.value) return FollowController.command(target)
+        val s = settings.value
+        return OrbitController.command(target, s.orbitClockwise, s.orbitSpeed)
     }
 
     /** SAFETY: hover ends when not flying or without a link (the next takeoff must never start "hovering"). */

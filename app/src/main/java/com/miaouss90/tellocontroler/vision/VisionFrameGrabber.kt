@@ -18,15 +18,23 @@ import java.util.concurrent.atomic.AtomicBoolean
  * [periodMs] and delivers it as a [GrayFrame] on a dedicated vision thread — never the UI thread.
  */
 @Composable
-fun VisionFrameGrabber(view: SurfaceView?, active: Boolean, onFrame: (GrayFrame) -> Unit, periodMs: Long = 100) {
+fun VisionFrameGrabber(
+    view: SurfaceView?,
+    active: Boolean,
+    onFrame: (GrayFrame) -> Unit,
+    /** QR codes are too small at 240x180: grab twice as big (the tracker downscales it). */
+    hiRes: Boolean = false,
+    periodMs: Long = 100,
+) {
     val thread = remember { HandlerThread("tello-vision").apply { start() } }
     DisposableEffect(thread) { onDispose { thread.quitSafely() } }
 
-    LaunchedEffect(view, active) {
+    LaunchedEffect(view, active, hiRes) {
         if (!active || view == null) return@LaunchedEffect
         val handler = Handler(thread.looper)
-        val bitmap = Bitmap.createBitmap(GrayFrame.VISION_WIDTH, GrayFrame.VISION_HEIGHT, Bitmap.Config.ARGB_8888)
-        val argb = IntArray(GrayFrame.VISION_WIDTH * GrayFrame.VISION_HEIGHT)
+        val factor = if (hiRes) 2 else 1
+        val bitmap = Bitmap.createBitmap(GrayFrame.VISION_WIDTH * factor, GrayFrame.VISION_HEIGHT * factor, Bitmap.Config.ARGB_8888)
+        val argb = IntArray(bitmap.width * bitmap.height)
         val busy = AtomicBoolean(false)
         while (isActive) {
             if (view.holder.surface.isValid && busy.compareAndSet(false, true)) {

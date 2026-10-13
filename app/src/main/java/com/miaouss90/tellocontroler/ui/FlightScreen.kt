@@ -104,7 +104,12 @@ fun FlightScreen(vm: FlightViewModel) {
 
             val target by vm.target.collectAsState()
             val visionActive by vm.visionActive.collectAsState()
-            VisionFrameGrabber(surfaceView, active = visionActive && videoActive, onFrame = { vm.onVisionFrame(it) })
+            VisionFrameGrabber(
+                surfaceView,
+                active = (visionActive || settings.qrActions) && videoActive,
+                onFrame = { vm.onVisionFrame(it) },
+                hiRes = settings.qrActions,
+            )
             if (videoActive) {
                 TargetLayer(
                     target = target,
@@ -234,6 +239,8 @@ fun FlightScreen(vm: FlightViewModel) {
                             ButtonDefaults.outlinedButtonColors()
                         },
                     ) { Text(if (following) "RB  FOLLOWING" else "RB  FOLLOW", fontWeight = FontWeight.Bold) }
+                    val orbiting by vm.orbitEngaged.collectAsState()
+                    OutlinedButton(onClick = { vm.toggleOrbit() }) { Text(if (orbiting) "ORBITING" else "ORBIT") }
                     OutlinedButton(onClick = { vm.clearTarget() }) { Text("✕ TARGET") }
                 }
                 OutlinedButton(enabled = videoActive, onClick = { vm.requestPhoto() }) { Text("X  PHOTO") }
