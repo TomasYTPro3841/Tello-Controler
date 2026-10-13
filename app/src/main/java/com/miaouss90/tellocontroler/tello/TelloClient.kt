@@ -113,6 +113,9 @@ class TelloClient(clock: () -> Long = System::currentTimeMillis) {
 
     suspend fun land() = request("land", MOTION_ACK_TIMEOUT_MS, preempt = true)
 
+    /** SDK `stop`: hovers in place and cancels any motion in progress. Not guarded: it can only make the drone stay still. */
+    suspend fun stop() = request("stop", ACK_TIMEOUT_MS)
+
     /** Mission Pad detection with the downward camera (`mon` + `mdirection 0`), or off (`moff`). SDK 2.0. */
     suspend fun setMissionPads(enabled: Boolean): CommandResult {
         if (!enabled) return request("moff", ACK_TIMEOUT_MS)

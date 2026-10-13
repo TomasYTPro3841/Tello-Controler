@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity(), InputManager.InputDeviceListener {
             XboxController.isRateCycle(event) -> vm.cycleRate()
             XboxController.isPhoto(event) -> vm.requestPhoto()
             XboxController.isFollowToggle(event) -> vm.toggleFollow()
+            XboxController.isHoverToggle(event) -> vm.toggleHover()
             XboxController.isRecordToggle(event) -> vm.toggleRecording()
             else -> return super.onKeyDown(keyCode, event)
         }

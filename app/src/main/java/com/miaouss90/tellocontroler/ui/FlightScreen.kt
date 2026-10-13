@@ -213,6 +213,17 @@ fun FlightScreen(vm: FlightViewModel) {
                 Modifier.align(Alignment.TopEnd).padding(top = 64.dp, end = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                val hovering by vm.hoverEngaged.collectAsState()
+                if (flightState == FlightState.FLYING) {
+                    Button(
+                        onClick = { vm.toggleHover() },
+                        colors = if (hovering) {
+                            ButtonDefaults.buttonColors(containerColor = HudColors.Green, contentColor = HudColors.Night)
+                        } else {
+                            ButtonDefaults.outlinedButtonColors()
+                        },
+                    ) { Text(if (hovering) "L1  HOVERING" else "L1  HOVER", fontWeight = FontWeight.Bold) }
+                }
                 if (visionActive) {
                     val following by vm.followEngaged.collectAsState()
                     Button(

@@ -159,6 +159,10 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
     private val _followEngaged = MutableStateFlow(false)
     val followEngaged = _followEngaged.asStateFlow()
 
+    /** HOVER: neutral RC is held (the Tello stabilizes itself) and FOLLOW is off; any pilot stick input ends it. */
+    private val _hoverEngaged = MutableStateFlow(false)
+    val hoverEngaged = _hoverEngaged.asStateFlow()
+
     /** The UI owns the SurfaceView, so it performs the frame grab when asked. */
     private val _photoRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val photoRequests: SharedFlow<Unit> = _photoRequests
@@ -234,6 +238,7 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
                 _videoLink.value = videoMonitor.quality()
                 checkMotorsStopped()
                 superviseFollow()
+                superviseHover()
                 delay(MONITOR_PERIOD_MS)
             }
         }
@@ -357,7 +362,10 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun neutralControls() = rcLoop.neutral()
+    fun neutralControls() {
+        rcLoop.neutral()
+        disengageHover(null)
+    }
 
     fun updateSettings(settings: FlightSettings) = settingsRepository.update { settings }
 
@@ -454,6 +462,26 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** L1 / HUD HOVER. Only while flying. Sends the SDK `stop` once, then keeps feeding neutral RC. */
+    fun toggleHover() {
+        if (_hoverEngaged.value) return disengageHover("Hover off")
+        if (flightState.value != FlightState.FLYING) return showNotice("Hover works in flight only")
+        disengageFollow(null)
+        _hoverEngaged.value = true
+        showNotice("HOVER on — any stick input takes over")
+        viewModelScope.launch(Dispatchers.IO) {
+            recordFlightSample("hover:on")
+            client.stop()
+        }
+    }
+
+    private fun disengageHover(reason: String?) {
+        if (!_hoverEngaged.value) return
+        _hoverEngaged.value = false
+        reason?.let { showNotice(it) }
+        viewModelScope.launch(Dispatchers.IO) { recordFlightSample("hover:off") }
+    }
+
     /** RB / HUD FOLLOW. Only engages while flying with a locked target. */
     fun toggleFollow() {
         if (_followEngaged.value) return disengageFollow("Follow off")
@@ -462,6 +490,7 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
             target == null || target.lost -> showNotice("Select a target first (tap the video)")
             flightState.value != FlightState.FLYING -> showNotice("Follow works in flight only")
             else -> {
+                disengageHover(null)
                 targetSeenAt = System.currentTimeMillis()
                 _followEngaged.value = true
                 showNotice("FOLLOW on — any stick input takes over")
@@ -483,6 +512,14 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
         val target = _target.value ?: return null
         if (System.currentTimeMillis() - targetAt > TARGET_FRESH_MS) return null
         return FollowController.command(target)
+    }
+
+    /** SAFETY: hover ends when not flying or without a link (the next takeoff must never start "hovering"). */
+    private fun superviseHover() {
+        if (!_hoverEngaged.value) return
+        if (flightState.value != FlightState.FLYING || connection.value != TelloConnectionState.CONNECTED) {
+            disengageHover("Hover off")
+        }
     }
 
     /** SAFETY: follow stops on landing, link loss or a target lost for [FOLLOW_GIVE_UP_MS]. */
@@ -565,8 +602,10 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
         }
         val profile = FlightProfiles.resolve(s)
         val pilot = axes?.let { StickMapper.map(it, s.deadZone, profile.scale, profile.expo) }
+        if (pilot != null && !pilot.isNeutral) disengageHover("Hover off: stick input")
         // Pilot sticks always win; follow only acts while they are centered. Nothing to send ⇒ watchdog neutral.
-        InputArbiter.choose(pilot, followCommand())?.let { rcLoop.update(it) }
+        val assist = if (_hoverEngaged.value) RcInput.NEUTRAL else followCommand()
+        InputArbiter.choose(pilot, assist)?.let { rcLoop.update(it) }
     }
 
     /**

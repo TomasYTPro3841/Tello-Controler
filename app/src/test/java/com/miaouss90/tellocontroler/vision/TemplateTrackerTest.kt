@@ -65,4 +65,36 @@ class TemplateTrackerTest {
         assertTrue(r.lost)
         assertEquals(before.centerX, r.centerX, 1e-6f)
     }
+
+    /** Same texture as [scene] but stretched to [side] x [side] pixels, centered on (cx, cy). */
+    private fun scaledScene(cx: Int, cy: Int, side: Int): GrayFrame {
+        val px = IntArray(w * h) { 90 }
+        for (y in 0 until side) for (x in 0 until side) {
+            val u = x * 20 / side
+            val v = y * 20 / side
+            val checker = if ((u / 5 + v / 5) % 2 == 0) 200 else 40
+            px[(cy - side / 2 + y) * w + cx - side / 2 + x] = (checker + u * 2).coerceIn(0, 255)
+        }
+        return GrayFrame(w, h, px)
+    }
+
+    @Test
+    fun `reports the scale when the object gets closer and then further`() {
+        val tracker = TemplateTracker()
+        // The template (36 px) is bigger than the object (20 px), so select on a scene where the object fills it.
+        val start = scaledScene(120, 90, 36)
+        assertTrue(tracker.select(start, 0.5f, 0.5f))
+        var scale = 1f
+        for (side in listOf(40, 44, 48, 52)) scale = tracker.track(scaledScene(120, 90, side)).scale
+        assertTrue("scale $scale", scale > 1.2f)
+        for (side in listOf(48, 44, 40, 36, 32, 29)) scale = tracker.track(scaledScene(120, 90, side)).scale
+        assertTrue("scale $scale", scale < 0.9f)
+    }
+
+    @Test
+    fun `scale stays 1 for a still object`() {
+        val tracker = TemplateTracker()
+        tracker.select(scaledScene(120, 90, 36), 0.5f, 0.5f)
+        assertEquals(1f, tracker.track(scaledScene(120, 90, 36)).scale, 0.01f)
+    }
 }
