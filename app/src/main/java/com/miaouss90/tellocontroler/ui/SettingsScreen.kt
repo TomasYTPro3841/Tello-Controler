@@ -41,6 +41,7 @@ import com.miaouss90.tellocontroler.settings.FlightProfiles
 import com.miaouss90.tellocontroler.settings.FlightSettings
 import com.miaouss90.tellocontroler.settings.RateProfile
 import com.miaouss90.tellocontroler.ui.theme.HudColors
+import com.miaouss90.tellocontroler.vision.TrackerKind
 import com.miaouss90.tellocontroler.update.GitHubReleaseSource
 import com.miaouss90.tellocontroler.update.UpdateState
 import com.miaouss90.tellocontroler.update.UpdateViewModel
@@ -77,6 +78,7 @@ fun SettingsScreen(
                     ToggleRow("Mission Pad detection (downward camera, shows pad id and position)", settings.missionPads) {
                         onSettingsChange(settings.copy(missionPads = it))
                     }
+                    TrackingSettingsSection(settings, onSettingsChange)
                     SectionTitle("Recording")
                     ToggleRow("Flight log (CSV per flight, saved in Download/TelloControler)", settings.flightLogs) {
                         onSettingsChange(settings.copy(flightLogs = it))
@@ -175,6 +177,42 @@ private fun FlightSettingsSection(settings: FlightSettings, onChange: (FlightSet
         onValueChange = { onChange(settings.copy(minTakeoffBatteryPercent = it.roundToInt())) },
         valueRange = FlightSettings.MIN_BATTERY_RANGE.first.toFloat()..FlightSettings.MIN_BATTERY_RANGE.last.toFloat(),
     )
+}
+
+@Composable
+private fun TrackingSettingsSection(settings: FlightSettings, onChange: (FlightSettings) -> Unit) {
+    SectionTitle("Tracking (FOLLOW / ORBIT)")
+    Text("Track a")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TrackerKind.entries.forEach { kind ->
+            val label = when (kind) {
+                TrackerKind.TEMPLATE -> "OBJECT"
+                TrackerKind.COLOR -> "COLOR"
+                TrackerKind.FACE -> "PERSON"
+            }
+            if (kind == settings.tracker) {
+                Button(onClick = {}) { Text(label) }
+            } else {
+                OutlinedButton(onClick = { onChange(settings.copy(tracker = kind)) }) { Text(label) }
+            }
+        }
+    }
+    Text(
+        "FOLLOW keeps the distance the target had when you tapped it: tap it from 1 m. PERSON follows a face " +
+            "(frontal only). There is no range sensor: distance comes from the apparent size.",
+        color = HudColors.Muted,
+        fontSize = 12.sp,
+    )
+    Text("Orbit speed: ${settings.orbitSpeed}")
+    Slider(
+        value = settings.orbitSpeed.toFloat(),
+        onValueChange = { onChange(settings.copy(orbitSpeed = it.roundToInt())) },
+        valueRange = FlightSettings.ORBIT_SPEED_RANGE.first.toFloat()..FlightSettings.ORBIT_SPEED_RANGE.last.toFloat(),
+    )
+    ToggleRow("Orbit clockwise", settings.orbitClockwise) { onChange(settings.copy(orbitClockwise = it)) }
+    ToggleRow("QR actions (TELLO:LAND / HOVER / PHOTO / RECORD)", settings.qrActions) {
+        onChange(settings.copy(qrActions = it))
+    }
 }
 
 @Composable

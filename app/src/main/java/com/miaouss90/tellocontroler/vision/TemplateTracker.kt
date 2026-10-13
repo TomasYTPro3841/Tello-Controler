@@ -14,6 +14,8 @@ data class TrackResult(
     /** Zero-mean normalized cross-correlation of the best match, -1..1. */
     val confidence: Float,
     val lost: Boolean,
+    /** Box side now / box side at selection: >1 the target got closer (or bigger), <1 it moved away. */
+    val scale: Float = 1f,
 )
 
 /**
@@ -27,13 +29,18 @@ class TemplateTracker(
     private val lostThreshold: Float = 0.45f,
     private val adaptThreshold: Float = 0.85f,
     private val adaptRate: Float = 0.1f,
-) {
+) : TargetTracker {
     companion object {
         /** Template side as a fraction of the frame height. */
         const val TEMPLATE_FRACTION = 0.2f
         private const val MIN_TEMPLATE_STD = 6.0
+        /** Scale step tried per frame, and the tracked range relative to the selection (shortcut: bounded zoom). */
+        private const val SCALE_STEP = 0.1
+        private const val MIN_SCALE = 0.5
+        private const val MAX_SCALE = 2.0
     }
 
+    private var baseSize = 0
     private var size = 0
     private var template = FloatArray(0) // zero-mean
     private var templateNorm = 0.0 // sqrt(sum(t^2))
@@ -41,10 +48,10 @@ class TemplateTracker(
     private var y = 0
     private var lostFrames = 0
 
-    val hasTarget: Boolean get() = size > 0
+    override val hasTarget: Boolean get() = size > 0
 
     /** Selects the patch centered on (nx, ny) normalized; false if the area is too uniform to track. */
-    fun select(frame: GrayFrame, nx: Float, ny: Float): Boolean {
+    override fun select(frame: GrayFrame, nx: Float, ny: Float): Boolean {
         val side = max(8, (frame.height * TEMPLATE_FRACTION).roundToInt())
         val left = ((nx * frame.width).roundToInt() - side / 2).coerceIn(0, frame.width - side)
         val top = ((ny * frame.height).roundToInt() - side / 2).coerceIn(0, frame.height - side)
@@ -53,6 +60,7 @@ class TemplateTracker(
         val centered = FloatArray(patch.size) { (patch[it] - mean).toFloat() }
         val norm = sqrt(centered.sumOf { (it * it).toDouble() })
         if (norm / sqrt(patch.size.toDouble()) < MIN_TEMPLATE_STD) return false
+        baseSize = side
         size = side
         template = centered
         templateNorm = norm
@@ -62,12 +70,12 @@ class TemplateTracker(
         return true
     }
 
-    fun clear() {
+    override fun clear() {
         size = 0
         template = FloatArray(0)
     }
 
-    fun track(frame: GrayFrame): TrackResult {
+    override fun track(frame: GrayFrame): TrackResult {
         check(hasTarget) { "no target selected" }
         // Widen the search while lost, to re-acquire after a quick motion.
         val radius = searchRadius * (1 + min(lostFrames, 3))
@@ -76,7 +84,7 @@ class TemplateTracker(
         var bestY = y
         fun consider(cx: Int, cy: Int) {
             if (cx < 0 || cy < 0 || cx > frame.width - size || cy > frame.height - size) return
-            val s = score(frame, cx, cy)
+            val s = score(frame, cx, cy, size, template, templateNorm)
             if (s > bestScore) {
                 bestScore = s
                 bestX = cx
@@ -95,6 +103,7 @@ class TemplateTracker(
             lostFrames = 0
             x = bestX
             y = bestY
+            bestScore = refineScale(frame, bestScore)
             if (bestScore > adaptThreshold) adapt(frame)
         }
         return TrackResult(
@@ -104,10 +113,44 @@ class TemplateTracker(
             boxHeight = size.toFloat() / frame.height,
             confidence = bestScore.toFloat(),
             lost = lost,
+            scale = size.toFloat() / baseSize,
         )
     }
 
-    private fun score(frame: GrayFrame, left: Int, top: Int): Double {
+    /** Tries the template one step bigger/smaller around the same center; keeps a clearly better fit. */
+    private fun refineScale(frame: GrayFrame, current: Double): Double {
+        var best = current
+        for (factor in doubleArrayOf(1 - SCALE_STEP, 1 + SCALE_STEP)) {
+            val side = (size * factor).roundToInt()
+            if (side < 8 || side > frame.height || side == size) continue
+            if (side < baseSize * MIN_SCALE || side > baseSize * MAX_SCALE) continue
+            val resized = resample(template, size, side)
+            val norm = sqrt(resized.sumOf { (it * it).toDouble() })
+            if (norm <= 1e-6) continue
+            val left = (x + (size - side) / 2).coerceIn(0, frame.width - side)
+            val top = (y + (size - side) / 2).coerceIn(0, frame.height - side)
+            val s = score(frame, left, top, side, resized, norm)
+            // Margin: prefer staying at the same scale unless the other one matches clearly better.
+            if (s > best + 0.03) {
+                best = s
+                size = side
+                template = resized
+                templateNorm = norm
+                x = left
+                y = top
+            }
+        }
+        return best
+    }
+
+    /** Nearest-neighbor resize of a square template, re-centered to zero mean. */
+    private fun resample(src: FloatArray, from: Int, to: Int): FloatArray {
+        val out = FloatArray(to * to) { src[(it / to * from / to) * from + (it % to * from / to)] }
+        val mean = out.average().toFloat()
+        return FloatArray(out.size) { out[it] - mean }
+    }
+
+    private fun score(frame: GrayFrame, left: Int, top: Int, size: Int, template: FloatArray, templateNorm: Double): Double {
         var sum = 0.0
         var sumSq = 0.0
         var cross = 0.0

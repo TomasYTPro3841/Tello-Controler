@@ -104,7 +104,12 @@ fun FlightScreen(vm: FlightViewModel) {
 
             val target by vm.target.collectAsState()
             val visionActive by vm.visionActive.collectAsState()
-            VisionFrameGrabber(surfaceView, active = visionActive && videoActive, onFrame = { vm.onVisionFrame(it) })
+            VisionFrameGrabber(
+                surfaceView,
+                active = (visionActive || settings.qrActions) && videoActive,
+                onFrame = { vm.onVisionFrame(it) },
+                hiRes = settings.qrActions,
+            )
             if (videoActive) {
                 TargetLayer(
                     target = target,
@@ -213,6 +218,17 @@ fun FlightScreen(vm: FlightViewModel) {
                 Modifier.align(Alignment.TopEnd).padding(top = 64.dp, end = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                val hovering by vm.hoverEngaged.collectAsState()
+                if (flightState == FlightState.FLYING) {
+                    Button(
+                        onClick = { vm.toggleHover() },
+                        colors = if (hovering) {
+                            ButtonDefaults.buttonColors(containerColor = HudColors.Green, contentColor = HudColors.Night)
+                        } else {
+                            ButtonDefaults.outlinedButtonColors()
+                        },
+                    ) { Text(if (hovering) "L1  HOVERING" else "L1  HOVER", fontWeight = FontWeight.Bold) }
+                }
                 if (visionActive) {
                     val following by vm.followEngaged.collectAsState()
                     Button(
@@ -223,6 +239,8 @@ fun FlightScreen(vm: FlightViewModel) {
                             ButtonDefaults.outlinedButtonColors()
                         },
                     ) { Text(if (following) "RB  FOLLOWING" else "RB  FOLLOW", fontWeight = FontWeight.Bold) }
+                    val orbiting by vm.orbitEngaged.collectAsState()
+                    OutlinedButton(onClick = { vm.toggleOrbit() }) { Text(if (orbiting) "ORBITING" else "ORBIT") }
                     OutlinedButton(onClick = { vm.clearTarget() }) { Text("✕ TARGET") }
                 }
                 OutlinedButton(enabled = videoActive, onClick = { vm.requestPhoto() }) { Text("X  PHOTO") }

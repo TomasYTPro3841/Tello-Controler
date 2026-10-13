@@ -1,6 +1,7 @@
 package com.miaouss90.tellocontroler.settings
 
 import android.content.Context
+import com.miaouss90.tellocontroler.vision.TrackerKind
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,6 +23,10 @@ class SettingsRepository(context: Context) {
         const val KEY_MODE = "flight_mode"
         const val KEY_EXPO = "expo"
         const val KEY_MAX_HEIGHT = "max_height_cm"
+        const val KEY_TRACKER = "tracker"
+        const val KEY_ORBIT_SPEED = "orbit_speed"
+        const val KEY_ORBIT_CLOCKWISE = "orbit_clockwise"
+        const val KEY_QR_ACTIONS = "qr_actions"
     }
 
     private val prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -45,6 +50,10 @@ class SettingsRepository(context: Context) {
             .putString(KEY_MODE, next.mode.name)
             .putFloat(KEY_EXPO, next.expo)
             .putInt(KEY_MAX_HEIGHT, next.maxHeightCm)
+            .putString(KEY_TRACKER, next.tracker.name)
+            .putInt(KEY_ORBIT_SPEED, next.orbitSpeed)
+            .putBoolean(KEY_ORBIT_CLOCKWISE, next.orbitClockwise)
+            .putBoolean(KEY_QR_ACTIONS, next.qrActions)
             .apply()
     }
 
@@ -64,6 +73,10 @@ class SettingsRepository(context: Context) {
             mode = FlightMode.entries.firstOrNull { it.name == prefs.getString(KEY_MODE, null) } ?: defaults.mode,
             expo = prefs.getFloat(KEY_EXPO, defaults.expo),
             maxHeightCm = prefs.getInt(KEY_MAX_HEIGHT, defaults.maxHeightCm),
+            tracker = TrackerKind.entries.firstOrNull { it.name == prefs.getString(KEY_TRACKER, null) } ?: defaults.tracker,
+            orbitSpeed = prefs.getInt(KEY_ORBIT_SPEED, defaults.orbitSpeed),
+            orbitClockwise = prefs.getBoolean(KEY_ORBIT_CLOCKWISE, defaults.orbitClockwise),
+            qrActions = prefs.getBoolean(KEY_QR_ACTIONS, defaults.qrActions),
         ).sanitized()
     }
 }
